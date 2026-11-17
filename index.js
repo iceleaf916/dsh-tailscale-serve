@@ -13,6 +13,12 @@
  * `connection.authenticatedUrl`), so the DSH Host/Origin fence and cookie
  * checks pass without adding tokens or passwords to the URL.
  *
+ * The same plugin ships a Settings page (client.js) that renders a read-only
+ * status view; the host half serves its snapshot at
+ * `GET /api/tailscale-serve/status` behind `connection.requestRejection`, so
+ * the page needs no extra credentials and the route cannot be driven from a
+ * foreign origin.
+ *
  * Scope of mutations, by design:
  *  - exactly one foreground `tailscale serve --https=443` child, started only
  *    after confirming the authority has no existing handler, and stopped
@@ -20,8 +26,10 @@
  *  - no `tailscale set`, `up`, `down`, `cert`, `serve --bg`, `serve reset`,
  *    or `serve clear`, no sudo, no edits to tailscale preferences.
  */
+import { readFileSync } from 'node:fs'
 import { createMinter } from './lib/auth.js'
 import { createProxy } from './lib/proxy.js'
+import { createStatusReport } from './lib/status.js'
 import { findServeConflict, publicOriginFor, readServeStatus, readTailscaleState } from './lib/tailscale.js'
 import { startServe } from './lib/serve.js'
 
@@ -33,6 +41,19 @@ const DEFAULTS = Object.freeze({
   tailscaleBin: 'tailscale',
   retryMs: 20000,
 })
+
+/** Wire path the Settings page reads; exact match, JSON only, GET/HEAD. */
+const STATUS_PATH = '/api/tailscale-serve/status'
+
+const VERSION = (() => {
+  try {
+    const text = readFileSync(new URL('./package.json', import.meta.url), 'utf8')
+    const version = JSON.parse(text)?.version
+    return typeof version === 'string' ? version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+})()
 
 const messageOf = (error) => (error instanceof Error ? error.message : String(error))
 
@@ -56,9 +77,11 @@ export function apply(ctx, config) {
   const logger = ctx.logger ?? console
   const origin = ctx.webServer.getOrigin()
   const minter = createMinter({ connection: ctx.connection, origin, logger })
+  const status = createStatusReport({ version: VERSION, config: options, origin })
 
   let proxy
   let serve
+  let serveStartedAt = 0
   let timer
   let booting = false
   let disposed = false
@@ -74,6 +97,7 @@ export function apply(ctx, config) {
 
   const scheduleRetry = () => {
     if (disposed || timer !== undefined) return
+    status.retrying(Date.now() + options.retryMs)
     timer = setTimeout(() => {
       timer = undefined
       void boot()
@@ -86,14 +110,64 @@ export function apply(ctx, config) {
       lastFailure = reason
       logger.warn(`tailscale-serve: ${reason}`)
     }
+    status.failed(reason, disposed ? null : Date.now() + options.retryMs)
     scheduleRetry()
   }
+
+  const sendJson = (res, code, body) => {
+    if (res.headersSent) {
+      res.end()
+      return
+    }
+    res.writeHead(code, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    })
+    res.end(JSON.stringify(body))
+  }
+
+  // The Settings page reads this route through the same DSH authentication as
+  // every API call: on loopback the browser cookie passes, and through the
+  // tailnet bridge the bridge's minted cookie does. A foreign Origin is
+  // rejected by the same fence that protects the rest of the API.
+  ctx.effect(() =>
+    ctx.webServer.register({
+      kind: 'exact',
+      path: STATUS_PATH,
+      handler: (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405, { allow: 'GET, HEAD' })
+          res.end()
+          return
+        }
+        let rejection
+        try {
+          rejection = ctx.connection.requestRejection({ headers: req.headers })
+        } catch (error) {
+          logger.warn(`tailscale-serve: status route rejected a request: ${messageOf(error)}`)
+          sendJson(res, 500, { error: 'status unavailable' })
+          return
+        }
+        if (rejection !== undefined) {
+          sendJson(res, rejection, {
+            error: rejection === 403 ? 'request not allowed from this origin' : 'dsh authentication required',
+          })
+          return
+        }
+        sendJson(res, 200, status.snapshot())
+      },
+    }),
+  )
 
   async function boot() {
     if (disposed || booting) return
     booting = true
     try {
-      if (minter.value === '') await minter.ensure()
+      if (minter.value === '') {
+        await minter.ensure()
+        status.cookieReady(minter.value !== '')
+      }
 
       if (proxy === undefined) {
         const created = await createProxy({ origin, minter, publicOrigin: () => publicOrigin, logger })
@@ -102,6 +176,8 @@ export function apply(ctx, config) {
           return
         }
         proxy = created
+        status.bridgeReady(proxy.port)
+        status.cookieReady(minter.value !== '')
       }
 
       const state = await readTailscaleState(options.tailscaleBin)
@@ -110,15 +186,17 @@ export function apply(ctx, config) {
         return
       }
       if (disposed) return
+      status.tailscaleReady(state)
+      publicOrigin = publicOriginFor(state.dnsName, options.httpsPort)
 
       if (serve === undefined) {
-        const status = await readServeStatus(options.tailscaleBin)
-        if (!status.ok) {
-          reportFailure(`cannot read \`tailscale serve status\`: ${status.error}`)
+        const serveStatus = await readServeStatus(options.tailscaleBin)
+        if (!serveStatus.ok) {
+          reportFailure(`cannot read \`tailscale serve status\`: ${serveStatus.error}`)
           return
         }
         if (disposed) return
-        const conflict = findServeConflict(status.value, state.dnsName, options.httpsPort, proxy.port)
+        const conflict = findServeConflict(serveStatus.value, state.dnsName, options.httpsPort, proxy.port)
         if (conflict !== undefined) {
           reportFailure(conflict)
           return
@@ -133,6 +211,7 @@ export function apply(ctx, config) {
           return
         }
         serve = started
+        serveStartedAt = Date.now()
         started.child.once('exit', (code, signal) => {
           if (serve !== started) return
           serve = undefined
@@ -145,8 +224,8 @@ export function apply(ctx, config) {
         })
       }
 
-      publicOrigin = publicOriginFor(state.dnsName, options.httpsPort)
       minter.start()
+      status.serveReady({ pid: serve?.child.pid, publicOrigin, startedAt: serveStartedAt })
       if (lastFailure !== '') logger.info('tailscale-serve: recovered')
       lastFailure = ''
       logger.info(`tailscale-serve: ready at ${publicOrigin} -> ${origin}`)
@@ -171,6 +250,7 @@ export function apply(ctx, config) {
     disposed = true
     stopTimer()
     minter.stop()
+    status.stop()
     process.removeListener('exit', onProcessExit)
     const pendingServe = serve
     serve = undefined

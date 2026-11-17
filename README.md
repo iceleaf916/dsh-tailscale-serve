@@ -49,6 +49,23 @@ git clone https://github.com/iceleaf916/dsh-tailscale-serve.git
 在本仓库目录用 dsh 的插件安装器安装（`plugin_manager`，target 为本目录绝对路径），
 或在插件市场里以本地目录安装。卸载/停用插件后，前台 serve 子进程被终止，映射随之消失。
 
+## 设置页（状态信息）
+
+插件带一个只读的设置页：**设置 → Tailscale Serve**。它显示当前发布状态
+（运行中 / 启动中 / 需要处理 / 已停止）、公网地址、本地 DSH 地址、回环桥端口、
+会话 cookie 是否已注入、tailnet 信息（DNS 名称、主机名、Tailscale 版本、地址）、
+serve 映射（HTTPS 端口与 pid）、运行时长、最近一次错误与下次重试时间、插件版本与
+当前配置，并可点「立即刷新」手动拉取（页面本身每 3 秒轮询一次）。
+
+页面数据来自宿主半区注册的只读 JSON 路由
+`GET /api/tailscale-serve/status`，经 DSH 正常的鉴权（`connection.requestRejection`），
+所以它在本机和 tailnet 公网地址下都能用，且不暴露给未登录请求。
+
+> 首次安装（或升级到带设置页的版本）后，需要**重启一次 DSH 客户端**才会出现该设置页。
+> 原因在 DSH 的客户端模块系统：它按 Loader 条目缓存包清单，进程启动时扫描一次；
+> 安装到已运行的宿主里时，缓存里还是没有 `dsh.client` 的旧结果，无法原地刷新。
+> 插件宿主半区（serve 转发、状态路由）会立即生效，只有浏览器半区需要重启加载。
+
 ## 配置（`cordis.patch.yml` 中的 `config`）
 
 | 键 | 默认值 | 说明 |
