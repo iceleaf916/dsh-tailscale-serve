@@ -35,5 +35,10 @@
   "license": "MIT",
   "engines": {
     "node": ">=20"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iceleaf916/dsh-tailscale-serve.git"
+  },
+  "homepage": "https://github.com/iceleaf916/dsh-tailscale-serve"
 }
