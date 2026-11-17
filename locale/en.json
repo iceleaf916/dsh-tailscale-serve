@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tailscale HTTPS",
+    "description": "Publishes this DSH Web UI over HTTPS on your tailnet with `tailscale serve` — no added token or password, reachable only through Tailscale."
+  }
+}

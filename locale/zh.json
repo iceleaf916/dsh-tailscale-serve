@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Tailscale HTTPS 访问",
+    "description": "用 `tailscale serve` 把当前 DSH Web 界面发布到你的 tailnet HTTPS 上：不用额外令牌或密码，只有 Tailscale 网络内的设备能访问。"
+  }
+}

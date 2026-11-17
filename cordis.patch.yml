@@ -1,0 +1,17 @@
+# dsh-tailscale-serve bundle patch.
+#
+# Inserts exactly one row: this plugin. No official row is disabled or
+# overridden. The row's `name` must equal the package name so the plugin
+# metadata and locale entries resolve.
+#
+# Optional config keys (all have defaults):
+#   httpsPort    - tailnet HTTPS port served by `tailscale serve` (default 443)
+#   tailscaleBin - path to the tailscale CLI (default "tailscale")
+#   retryMs      - retry delay when tailscale is not ready yet (default 20000)
+- insert:
+    - id: dsh-tailscale-serve
+      name: dsh-tailscale-serve
+      config:
+        httpsPort: 443
+        tailscaleBin: tailscale
+        retryMs: 20000

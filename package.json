@@ -1,0 +1,39 @@
+{
+  "name": "dsh-tailscale-serve",
+  "version": "0.1.0",
+  "description": "Publish this DSH Web GUI over HTTPS on your tailnet with `tailscale serve` — no extra token, no password, reachable only through Tailscale.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "tailscale",
+    "https",
+    "tailnet"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
